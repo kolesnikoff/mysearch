@@ -1,0 +1,4 @@
+name = My Search
+description = Provides simple search functionality without using standard Drupal search.
+core = 7.x
+configure = admin/config/search/mysearch

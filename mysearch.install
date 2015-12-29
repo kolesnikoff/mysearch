@@ -1,0 +1,8 @@
+<?php
+
+/**
+ * Implements hook_uninstall().
+ */
+function mysearch_uninstall() {
+  variable_del('mysearch_content_types');
+}

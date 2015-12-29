@@ -1,0 +1,182 @@
+<?php
+
+/**
+ * @file
+ * Provides search and results render functionality.
+ */
+
+/**
+ * Implements hook_theme().
+ */
+function mysearch_theme() {
+  $templates_path = drupal_get_path('module', 'mysearch') . '/templates';
+  $items = array();
+
+  $items['mysearch_nothing_found'] = array(
+    'arguments' => array('keywords' => NULL),
+    'path' => $templates_path,
+    'template' => 'mysearch-nothing-found',
+  );
+
+  $items['mysearch_results_list'] = array(
+    'arguments' => array('keywords' => NULL, 'results' => array()),
+    'path' => $templates_path,
+    'template' => 'mysearch-results-list',
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function mysearch_permission() {
+  return array(
+    'access mysearch' => array(
+      'title' => t('Access My Search'),
+      'description' => t('Allows a user to access search results'),
+    )
+  );
+}
+
+/**
+ * Implements hook_menu().
+ */
+function mysearch_menu() {
+  $items = array();
+
+  $items['mysearch/%'] = array(
+    'title' => 'Search',
+    'title callback' => 'mysearch_search_result_page_title',
+    'title arguments' => array(1),
+    'page callback' => 'mysearch_search_results_page',
+    'page arguments' => array(1),
+    'access arguments' => array('access mysearch'),
+  );
+
+  $items['admin/config/search/mysearch'] = array(
+    'title' => 'My Search',
+    'description' => 'Configure MySearch settings.',
+    'file' => 'mysearch.admin.inc',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('mysearch_admin_settings'),
+    'access arguments' => array('administer site configuration'),
+  );
+
+  return $items;
+}
+
+/**
+ * Generates page title according to search string.
+ *
+ * @param $query
+ *
+ * @return string
+ */
+function mysearch_search_result_page_title($query) {
+  return t('Search: @query', array('@query' => $query));
+}
+
+/**
+ * Menu callback provides a simple list of nodes matching the
+ * search term Example: hitting the URL:
+ *   http://domain.com/mysearch/example
+ * will return a list of links to nodes which have the word
+ * "example" in them.
+ *
+ * @param string $keywords
+ *
+ * @return string
+ */
+function mysearch_search_results_page($keywords) {
+  $keywords = trim($keywords);
+
+  // Handle search string.
+  if (empty($keywords)) {
+    return theme('mysearch_nothing_found', array('keywords' => $keywords));
+  }
+
+  $nodes = mysearch_execute_search($keywords);
+  // Nothing found by the query.
+  if (!$nodes) {
+    return theme('mysearch_nothing_found', array('keywords' => $keywords));
+  }
+
+  // Generate list of links.
+  $links = array();
+  foreach ($nodes as $node) {
+    $links[] = array(
+      'title' => $node->title,
+      'href' => 'node/' . $node->nid
+    );
+  }
+  $results = theme('links', array('links' => $links));
+
+  // Output simple list of links.
+  $output = theme('mysearch_results_list',
+    array(
+      'keywords' => $keywords,
+      'results' => $results
+    )
+  );
+
+  return $output;
+}
+
+/**
+ * Executes search by keywords into nodes.
+ *
+ * @param $keywords
+ *
+ * @return bool|array
+ */
+function mysearch_execute_search($keywords) {
+  $query = new EntityFieldQuery();
+
+  // Find all active nodes and sort them by title.
+  $query->entityCondition('entity_type', 'node')
+    ->propertyCondition('status', 1)
+    ->addTag('search_conditions')
+    ->addMetaData('keywords', $keywords)
+    ->propertyOrderBy('title', 'ASC');
+
+  // If we selected some content types in the settings
+  // then search inside them.
+  $content_types = variable_get('mysearch_content_types', array());
+  if (!empty($content_types)) {
+    $types = array();
+    foreach ($content_types as $type) {
+      if ($type != 0) {
+        $types[] = $type;
+      }
+    }
+    if (!empty($types)) {
+      $query->propertyCondition('type', $content_types, 'IN');
+    }
+  }
+
+  $entities = $query->execute();
+  if (empty($entities)) {
+    return FALSE;
+  }
+
+  // Return array of nodes.
+  $nodes = node_load_multiple(array_keys($entities['node']));
+  return $nodes;
+}
+
+/**
+ * Implements hook_query_TAG_alter() for search_conditions.
+ *
+ * @param \QueryAlterableInterface $query
+ */
+function mysearch_query_search_conditions_alter(QueryAlterableInterface $query) {
+  $keywords = '%' . $query->getMetaData('keywords') . '%';
+
+  // Add condtition to search by body and title.
+  $query->leftJoin('field_data_body', 'b', 'node.nid = b.entity_id');
+  $or = db_or()
+    ->condition('b.body_value', $keywords, 'LIKE')
+    ->condition('node.title', $keywords, 'LIKE');
+  $query->condition($or);
+}
